@@ -3,7 +3,6 @@ import pandas as pd
 
 DB_NAME = "ventas_cobros.db"
 
-# Tasas de IVA / ISV por país
 TASAS_IVA = {
     "El Salvador": 0.13,
     "Guatemala": 0.12,
@@ -12,7 +11,6 @@ TASAS_IVA = {
     "Costa Rica": 0.13
 }
 
-# Monedas permitidas por país
 MONEDAS_POR_PAIS = {
     "El Salvador": ["USD ($)"],
     "Guatemala": ["GTQ (Q)", "USD ($)"],
@@ -25,24 +23,40 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Tabla de Ventas / Facturas
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ventas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            num_factura TEXT UNIQUE NOT NULL,
-            cliente TEXT NOT NULL,
-            fecha TEXT NOT NULL,
-            pais TEXT NOT NULL,
-            moneda TEXT NOT NULL,
-            monto_neto REAL NOT NULL,
-            monto_iva REAL NOT NULL,
-            monto_total REAL NOT NULL,
-            saldo_pendiente REAL NOT NULL,
-            estado TEXT NOT NULL
-        )
-    ''')
+    # 1. Verificar estructura actual de la tabla 'ventas'
+    cursor.execute("PRAGMA table_info(ventas)")
+    columns = [column[1] for column in cursor.fetchall()]
     
-    # Tabla de Abonos / Pagos
+    if not columns:
+        # Crear la tabla completa si no existía
+        cursor.execute('''
+            CREATE TABLE ventas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                num_factura TEXT UNIQUE NOT NULL,
+                cliente TEXT NOT NULL,
+                fecha TEXT NOT NULL,
+                pais TEXT NOT NULL,
+                moneda TEXT NOT NULL,
+                monto_neto REAL NOT NULL,
+                monto_iva REAL NOT NULL,
+                monto_total REAL NOT NULL,
+                saldo_pendiente REAL NOT NULL,
+                estado TEXT NOT NULL
+            )
+        ''')
+    else:
+        # Migración automática: Agregar columnas si la tabla se creó con el esquema anterior
+        columnas_requeridas = {
+            "pais": "TEXT DEFAULT 'El Salvador'",
+            "moneda": "TEXT DEFAULT 'USD ($)'",
+            "monto_neto": "REAL DEFAULT 0.0",
+            "monto_iva": "REAL DEFAULT 0.0"
+        }
+        for col, col_type in columnas_requeridas.items():
+            if col not in columns:
+                cursor.execute(f"ALTER TABLE ventas ADD COLUMN {col} {col_type}")
+    
+    # 2. Crear tabla de abonos si no existe
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS abonos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,11 +116,11 @@ def registrar_venta(num_factura, cliente, fecha, pais, moneda, monto_total, mont
         cursor.execute('''
             INSERT INTO ventas (num_factura, cliente, fecha, pais, moneda, monto_neto, monto_iva, monto_total, saldo_pendiente, estado)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pendiente')
-        ''', (num_factura, cliente, str(fecha), pais, moneda, monto_neto, monto_iva, monto_total, monto_total))
+        ''', (str(num_factura).strip(), str(cliente).strip(), str(fecha).strip(), str(pais).strip(), str(moneda).strip(), float(monto_neto), float(monto_iva), float(monto_total), float(monto_total)))
         conn.commit()
-        return True, "Venta registrada con éxito."
+        return True, f"Factura '{num_factura}' registrada con éxito."
     except sqlite3.IntegrityError:
-        return False, f"El número de factura '{num_factura}' ya existe."
+        return False, f"El número de factura '{num_factura}' ya existe en el sistema."
     finally:
         conn.close()
 
@@ -120,23 +134,27 @@ def registrar_ventas_masivas(df_ventas):
         num_factura = str(row['num_factura']).strip() if pd.notnull(row['num_factura']) else ""
         cliente = str(row['cliente']).strip() if pd.notnull(row['cliente']) else ""
         fecha = str(row['fecha']).strip() if pd.notnull(row['fecha']) else ""
-        pais = str(row['pais']).strip() if pd.notnull(row['pais']) else "El Salvador"
-        moneda = str(row['moneda']).strip() if pd.notnull(row['moneda']) else "USD ($)"
+        pais = str(row['pais']).strip() if pd.notnull(row['pais']) and str(row['pais']).strip() != "" else "Honduras"
+        moneda = str(row['moneda']).strip() if pd.notnull(row['moneda']) and str(row['moneda']).strip() != "" else "USD ($)"
         
         try:
             monto_total = float(row['monto_total'])
         except (ValueError, TypeError):
-            errores.append(f"Fila {idx+1}: Monto total inválido para factura '{num_factura}'.")
+            errores.append(f"Fila {idx+1}: Monto total inválido.")
             continue
 
-        if not num_factura or not cliente:
-            errores.append(f"Fila {idx+1}: Faltan datos requeridos (Número de Factura o Cliente).")
+        if not num_factura or num_factura == "None":
+            errores.append(f"Fila {idx+1}: Falta el Número de Factura.")
+            continue
+            
+        if not cliente or cliente == "None":
+            errores.append(f"Fila {idx+1} ({num_factura}): Falta el nombre del Cliente.")
             continue
             
         monto_neto = float(row['monto_neto']) if 'monto_neto' in row and pd.notnull(row['monto_neto']) else None
         monto_iva = float(row['monto_iva']) if 'monto_iva' in row and pd.notnull(row['monto_iva']) else None
         
-        if monto_neto is None or monto_iva is None:
+        if monto_neto is None or monto_iva is None or (monto_neto == 0 and monto_iva == 0 and monto_total > 0):
             monto_neto, monto_iva = calcular_desglose_iva(monto_total, pais)
             
         try:
@@ -146,7 +164,7 @@ def registrar_ventas_masivas(df_ventas):
             ''', (num_factura, cliente, fecha, pais, moneda, monto_neto, monto_iva, monto_total, monto_total))
             exitosos += 1
         except sqlite3.IntegrityError:
-            errores.append(f"La factura '{num_factura}' ya existe en el sistema.")
+            errores.append(f"Factura '{num_factura}' ya existe en el sistema.")
         except Exception as e:
             errores.append(f"Error en factura '{num_factura}': {str(e)}")
             
