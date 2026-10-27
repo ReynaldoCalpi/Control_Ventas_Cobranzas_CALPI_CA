@@ -37,32 +37,41 @@ def extraer_datos_factura_pdf(stream_pdf, filename=""):
         datos["pais"] = "Honduras"
         datos["moneda"] = "HNL (L)"
         
-        # N° Factura (Ej: 000-002-01-00000828)
-        match_fac = re.search(r'000-\d{3}-\d{2}-\d{8}', texto)
-        if not match_fac:
-            match_fac = re.search(r'FACTURA\s*\n?\s*([0-9\-]+)', texto, re.IGNORECASE)
-        if match_fac:
-            datos["num_factura"] = match_fac.group(0 if match_fac.group(0).startswith("000") else 1)
+        # N° Factura (Une correlativos divididos en 2 líneas como 000-002-01-00000 + 828)
+        m_fac_split = re.search(r'FACTURA[\s\|]*(\d{3}-\d{3}-\d{2}-\d{5})[\s\|]*(\d{3})', texto, re.IGNORECASE)
+        if m_fac_split:
+            datos["num_factura"] = f"{m_fac_split.group(1)}{m_fac_split.group(2)}"
+        else:
+            m_fac_dir = re.search(r'FACTURA[\s\|]*(\d{3}-\d{3}-\d{2}-\d{8})', texto, re.IGNORECASE)
+            if m_fac_dir:
+                datos["num_factura"] = m_fac_dir.group(1)
+            else:
+                m_fac_any = re.search(r'000-\d{3}-\d{2}-\d{8}', texto)
+                if m_fac_any:
+                    datos["num_factura"] = m_fac_any.group(0)
             
         # Cliente
-        match_cli = re.search(r'Cliente:\s*(.+)', texto)
-        if match_cli:
-            datos["cliente"] = match_cli.group(1).split("Dirección:")[0].split("R.TN")[0].strip()
+        m_cli = re.search(r'Cliente:[\s\|]*(.+)', texto, re.IGNORECASE)
+        if m_cli:
+            cli_raw = m_cli.group(1).split("Dirección:")[0].split("R.TN")[0].split("RTN")[0].strip()
+            datos["cliente"] = re.sub(r'^[\|:\s]+|[\|:\s]+$', '', cli_raw)
             
-        # Fecha (Ej: 06 de octubre de 2026)
-        match_fec = re.search(r'Fecha:\s*(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})', texto, re.IGNORECASE)
-        if match_fec:
-            datos["fecha"] = match_fec.group(1)
+        # Fecha
+        m_fec = re.search(r'Fecha:[\s\|]*(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})', texto, re.IGNORECASE)
+        if not m_fec:
+            m_fec = re.search(r'Fecha:[\s\|]*(\d{2}/\d{2}/\d{4})', texto, re.IGNORECASE)
+        if m_fec:
+            datos["fecha"] = m_fec.group(1)
             
-        # Total
-        match_tot = re.search(r'Total a Pagar L\.\s*L?\s*([\d,]+\.\d{2})', texto, re.IGNORECASE)
-        if match_tot:
-            datos["monto_total"] = float(match_tot.group(1).replace(',', ''))
+        # Total a Pagar
+        m_tot = re.search(r'Total a Pagar L\.[\s\|]*L?\s*([\d,]+\.\d{2})', texto, re.IGNORECASE)
+        if m_tot:
+            datos["monto_total"] = float(m_tot.group(1).replace(',', ''))
             
-        # ISV (15%)
-        match_isv = re.search(r'15%\s*I\.S\.V\.\s*L\.\s*L?\s*([\d,]+\.\d{2})', texto, re.IGNORECASE)
-        if match_isv:
-            datos["monto_iva"] = float(match_isv.group(1).replace(',', ''))
+        # 15% ISV
+        m_isv = re.search(r'15%\s*I\.S\.V\.\s*L\.[\s\|]*L?\s*([\d,]+\.\d{2})', texto, re.IGNORECASE)
+        if m_isv:
+            datos["monto_iva"] = float(m_isv.group(1).replace(',', ''))
             
         datos["monto_neto"] = round(datos["monto_total"] - datos["monto_iva"], 2)
 
@@ -76,33 +85,34 @@ def extraer_datos_factura_pdf(stream_pdf, filename=""):
             datos["moneda"] = "USD ($)"
             
         # N° Factura / DTE
-        match_dte = re.search(r'Número de DTE:\s*(\d+)', texto)
-        if match_dte:
-            datos["num_factura"] = match_dte.group(1)
+        m_dte = re.search(r'Número de DTE:[\s\|]*(\d+)', texto)
+        if m_dte:
+            datos["num_factura"] = m_dte.group(1)
         else:
-            match_serie = re.search(r'Serie:\s*([A-Z0-9]+)', texto)
-            if match_serie:
-                datos["num_factura"] = match_serie.group(1)
+            m_serie = re.search(r'Serie:[\s\|]*([A-Z0-9]+)', texto)
+            if m_serie:
+                datos["num_factura"] = m_serie.group(1)
             
         # Cliente
-        match_cli = re.search(r'Nombre Receptor:\s*(.+)', texto)
-        if match_cli:
-            datos["cliente"] = match_cli.group(1).strip()
+        m_cli = re.search(r'Nombre Receptor:[\s\|]*(.+)', texto)
+        if m_cli:
+            cli_raw = m_cli.group(1).split("Factura")[0].split("Fecha")[0].strip()
+            datos["cliente"] = re.sub(r'^[\|:\s]+|[\|:\s]+$', '', cli_raw)
             
         # Fecha
-        match_fec = re.search(r'Fecha y hora de emision:\s*(\d{2}-\w+-\d{4})', texto, re.IGNORECASE)
-        if match_fec:
-            datos["fecha"] = match_fec.group(1)
+        m_fec = re.search(r'Fecha y hora de emision:[\s\|]*(\d{2}-\w+-\d{4})', texto, re.IGNORECASE)
+        if m_fec:
+            datos["fecha"] = m_fec.group(1)
             
         # Total
-        match_tot = re.search(r'TOTALES:\s*[\d\.,]+\s*[\d\.,]+\s*([\d,]+\.\d{2})', texto)
-        if match_tot:
-            datos["monto_total"] = float(match_tot.group(1).replace(',', ''))
+        m_tot = re.search(r'TOTALES:[\s\|]*[\d\.,]+[\s\|]*[\d\.,]+[\s\|]*([\d,]+\.\d{2})', texto)
+        if m_tot:
+            datos["monto_total"] = float(m_tot.group(1).replace(',', ''))
             
         # IVA
-        match_iva = re.search(r'IVA\s*([\d,]+\.\d{2})', texto)
-        if match_iva:
-            datos["monto_iva"] = float(match_iva.group(1).replace(',', ''))
+        m_iva = re.search(r'TOTALES:[\s\S]*?IVA[\s\|]*([\d,]+\.\d{2})', texto)
+        if m_iva:
+            datos["monto_iva"] = float(m_iva.group(1).replace(',', ''))
             
         datos["monto_neto"] = round(datos["monto_total"] - datos["monto_iva"], 2)
 
@@ -111,29 +121,30 @@ def extraer_datos_factura_pdf(stream_pdf, filename=""):
         datos["pais"] = "Costa Rica"
         datos["moneda"] = "USD ($)"
         
-        match_cons = re.search(r'Consecutivo:\s*(\d+)', texto)
-        if match_cons:
-            datos["num_factura"] = match_cons.group(1)
+        m_cons = re.search(r'Consecutivo:[\s\|]*(\d+)', texto)
+        if m_cons:
+            datos["num_factura"] = m_cons.group(1)
             
-        match_cli = re.search(r'Nombre:\s*(.+)', texto)
-        if match_cli:
-            datos["cliente"] = match_cli.group(1).strip()
+        m_cli = re.search(r'Nombre:[\s\|]*(.+)', texto)
+        if m_cli:
+            cli_raw = m_cli.group(1).split("Cédula:")[0].split("Teléfono:")[0].strip()
+            datos["cliente"] = re.sub(r'^[\|:\s]+|[\|:\s]+$', '', cli_raw)
             
-        match_fec = re.search(r'Fecha:\s*(\d{2}/\d{2}/\d{4})', texto)
-        if match_fec:
-            datos["fecha"] = match_fec.group(1)
+        m_fec = re.search(r'Fecha:[\s\|]*(\d{2}/\d{2}/\d{4})', texto)
+        if m_fec:
+            datos["fecha"] = m_fec.group(1)
             
-        match_tot = re.search(r'Total:\s*([\d\.,]+)', texto)
-        if match_tot:
-            val_str = match_tot.group(1).replace('.', '').replace(',', '.')
+        m_tot = re.search(r'Total:[\s\|]*([\d\.,]+)', texto)
+        if m_tot:
+            val_str = m_tot.group(1).replace('.', '').replace(',', '.')
             try:
                 datos["monto_total"] = float(val_str)
             except ValueError:
                 pass
                 
-        match_iva = re.search(r'I\.V\.A\s*([\d\.,]+)', texto)
-        if match_iva:
-            val_iva = match_iva.group(1).replace('.', '').replace(',', '.')
+        m_iva = re.search(r'I\.V\.A[\s\|]*([\d\.,]+)', texto)
+        if m_iva:
+            val_iva = m_iva.group(1).replace('.', '').replace(',', '.')
             try:
                 datos["monto_iva"] = float(val_iva)
             except ValueError:
