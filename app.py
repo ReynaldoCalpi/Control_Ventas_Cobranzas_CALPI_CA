@@ -6,7 +6,7 @@ from datetime import date
 import database as db
 import pdf_extractor
 
-# Forzar la recarga del módulo pdf_extractor para actualizar la memoria de Streamlit
+# Forzar la recarga del módulo extractor de PDF
 importlib.reload(pdf_extractor)
 
 st.set_page_config(
@@ -17,6 +17,12 @@ st.set_page_config(
 
 # Inicializar Base de Datos
 db.init_db()
+
+# Inicializar Estados de Sesión para Notificaciones
+if "mensaje_exito" not in st.session_state:
+    st.session_state.mensaje_exito = None
+if "mensaje_error" not in st.session_state:
+    st.session_state.mensaje_error = None
 
 st.title("🌎 Control de Ventas y Cuentas por Cobrar (Multipaís)")
 st.caption("Gestión regional con desglose automático de IVA, múltiples monedas y carga masiva")
@@ -38,7 +44,6 @@ else:
 
 moneda_seleccionada = st.sidebar.selectbox("Seleccionar Moneda", monedas_opciones)
 
-# Resumen de tasas de IVA regionales
 st.sidebar.divider()
 st.sidebar.markdown("**ℹ️ Tasas de IVA / ISV Aplicables:**")
 st.sidebar.markdown("- 🇸🇻 El Salvador: 13% IVA (USD)")
@@ -73,6 +78,15 @@ col5.metric("% Recuperación", f"{pct_recuperacion:.1f}%")
 
 st.divider()
 
+# Mostrar notificaciones persistentes si existen
+if st.session_state.mensaje_exito:
+    st.success(st.session_state.mensaje_exito)
+    st.session_state.mensaje_exito = None
+
+if st.session_state.mensaje_error:
+    st.warning(st.session_state.mensaje_error)
+    st.session_state.mensaje_error = None
+
 # --- NAVEGACIÓN POR PESTAÑAS ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 Resumen de Ventas", 
@@ -84,7 +98,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 
 # 1. TABLA PRINCIPAL DE VENTAS
 with tab1:
-    st.subheader(f"Listado de Facturas ({pais_seleccionado} / {moneda_seleccionada})")
+    st.subheader(f"Listado de Facturas Registradas (Filtro: {pais_seleccionado} / {moneda_seleccionada})")
     
     col_filtro1, col_filtro2 = st.columns(2)
     with col_filtro1:
@@ -140,7 +154,7 @@ with tab2:
             monto_total = st.number_input("Monto Total Incorporado con IVA *", min_value=0.01, step=10.0, format="%.2f")
 
         tasa_iva_actual = db.TASAS_IVA[pais_form]
-        st.info(f"💡 Para **{pais_form}**, la tasa de impuesto aplicada es del **{int(tasa_iva_actual*100)}%**. El sistema desglosará automáticamente el Valor Neto y el IVA.")
+        st.info(f"💡 Para **{pais_form}**, la tasa de impuesto aplicada es del **{int(tasa_iva_actual*100)}%**.")
 
         submitted_venta = st.form_submit_button("Guardar Factura")
         if submitted_venta:
@@ -149,7 +163,7 @@ with tab2:
             else:
                 exito, msj = db.registrar_venta(num_factura, cliente, fecha_venta, pais_form, moneda_form, monto_total)
                 if exito:
-                    st.success(msj)
+                    st.session_state.mensaje_exito = msj
                     st.rerun()
                 else:
                     st.error(msj)
@@ -157,11 +171,11 @@ with tab2:
 # 3. CARGA MASIVA E INTERACTIVA DE FACTURAS (EXCEL / CSV / PDF)
 with tab3:
     st.subheader("📂 Carga Masiva y Revisión Interactiva (PDF, Excel o CSV)")
-    st.write("Sube tus archivos PDF o listas en Excel/CSV. Podrás **editar cualquier celda directamente en la tabla** antes de guardar los registros.")
+    st.write("Sube tus archivos PDF o listas en Excel/CSV. Revisa o edita cualquier campo en la tabla antes de hacer clic en Confirmar.")
     
     col_plantilla1, col_plantilla2 = st.columns([2, 1])
     with col_plantilla1:
-        st.markdown("**Si usas Excel/CSV, asegura la estructura de columnas:**")
+        st.markdown("**Estructura de columnas para Excel/CSV:**")
         st.code("num_factura, cliente, fecha, pais, moneda, monto_total", language="text")
     with col_plantilla2:
         df_ejemplo = pd.DataFrame([
@@ -184,7 +198,8 @@ with tab3:
     archivos_subidos = st.file_uploader(
         "Selecciona uno o varios archivos (PDF, Excel o CSV)", 
         type=["xlsx", "csv", "pdf"],
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        key="uploader_masivo"
     )
     
     if archivos_subidos:
@@ -211,7 +226,7 @@ with tab3:
         if lista_facturas:
             df_base = pd.DataFrame(lista_facturas)
             
-            # Asegurar columnas e importes calculados
+            # Recalcular desgloses
             netos = []
             ivas = []
             for _, row in df_base.iterrows():
@@ -240,9 +255,8 @@ with tab3:
             df_base = df_base[cols_deseadas]
             
             st.subheader("📝 Vista Previa Editable")
-            st.info("💡 **Puedes hacer clic sobre cualquier celda** (Número de Factura, Cliente, Importes) para corregir o ingresar manualmente valores antes de presionar Confirmar.")
+            st.info("💡 Haz doble clic sobre cualquier celda para corregir datos si es necesario antes de confirmar.")
             
-            # TABLA INTERACTIVA EDITABLE
             df_editado = st.data_editor(
                 df_base,
                 num_rows="dynamic",
@@ -257,17 +271,22 @@ with tab3:
                     "monto_iva": st.column_config.NumberColumn("Monto IVA/ISV", format="%.2f"),
                     "monto_total": st.column_config.NumberColumn("Monto Total", format="%.2f", required=True)
                 },
-                hide_index=True
+                hide_index=True,
+                key="editor_datos_facturas"
             )
             
             if st.button("✅ OK / Confirmar y Registrar Facturas en el Sistema", type="primary"):
                 exitosos, errores = db.registrar_ventas_masivas(df_editado)
+                
+                msg_final = ""
                 if exitosos > 0:
-                    st.success(f"🎉 Se registraron exitosamente **{exitosos}** facturas.")
+                    msg_final += f"🎉 ¡Éxito! Se registraron **{exitosos}** facturas en la base de datos."
                 if errores:
-                    st.warning(f"⚠️ Omisiones o advertencias ({len(errores)}):")
-                    for err in errores:
-                        st.write(f"- {err}")
+                    msg_final += f"\n\n⚠️ Detalles u omisiones ({len(errores)}):\n" + "\n".join([f"- {e}" for e in errores])
+                    st.session_state.mensaje_error = msg_final
+                else:
+                    st.session_state.mensaje_exito = msg_final
+                    
                 st.rerun()
 
 # 4. REGISTRAR ABONO
@@ -305,7 +324,7 @@ with tab4:
                 else:
                     exito, msj = db.registrar_abono(venta_id_sel, fecha_abono, monto_abono, metodo_pago, referencia)
                     if exito:
-                        st.success(msj)
+                        st.session_state.mensaje_exito = msj
                         st.rerun()
                     else:
                         st.error(msj)
