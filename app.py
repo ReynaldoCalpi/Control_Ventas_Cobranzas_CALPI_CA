@@ -3,6 +3,7 @@ import pandas as pd
 import io
 from datetime import date
 import database as db
+import pdf_extractor
 
 st.set_page_config(
     page_title="Control de Ventas y Cobranzas - Centroamérica",
@@ -39,7 +40,7 @@ st.sidebar.markdown("**ℹ️ Tasas de IVA / ISV Aplicables:**")
 st.sidebar.markdown("- 🇸🇻 El Salvador: 13% IVA (USD)")
 st.sidebar.markdown("- 🇬🇹 Guatemala: 12% IVA (GTQ / USD)")
 st.sidebar.markdown("- 🇭🇳 Honduras: 15% ISV (HNL)")
-st.sidebar.markdown("- 🇳🇮 Nicaragua: 15% IVA (USD)")
+st.sidebar.markdown("- 🇳🇮 Nicaragua: 15% IVA (USD - Manual)")
 st.sidebar.markdown("- 🇨🇷 Costa Rica: 13% IVA (USD)")
 
 # Cargar datos filtrados
@@ -72,7 +73,7 @@ st.divider()
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 Resumen de Ventas", 
     "➕ Nueva Venta Individual", 
-    "📂 Carga Masiva (Excel/CSV)",
+    "📂 Carga Masiva (Excel/CSV/PDF)",
     "💵 Registrar Abono", 
     "📥 Exportar Reportes"
 ])
@@ -121,7 +122,7 @@ with tab1:
 
 # 2. NUEVA VENTA INDIVIDUAL
 with tab2:
-    st.subheader("Registrar Venta Individual")
+    st.subheader("Registrar Venta Individual (Manual)")
     with st.form("form_nueva_venta", clear_on_submit=True):
         col_p1, col_p2 = st.columns(2)
         with col_p1:
@@ -149,49 +150,105 @@ with tab2:
                 else:
                     st.error(msj)
 
-# 3. CARGA MASIVA DE FACTURAS
-import pdf_extractor  # Módulo de extracción de PDF
-
-# ... dentro de tab3 (Carga Masiva):
-st.subheader("📂 Carga Masiva de Facturas (Excel, CSV o Archivos PDF)")
-st.write("Puedes subir un archivo **Excel/CSV** o seleccionar **múltiples facturas en PDF** de Honduras, Guatemala o Costa Rica para extraer automáticamente sus datos.")
-
-archivo_subido = st.file_uploader(
-    "Selecciona tu archivo (Excel, CSV o PDFs de Facturas)", 
-    type=["xlsx", "csv", "pdf"],
-    accept_multiple_files=True
-)
-
-if archivo_subido:
-    lista_facturas = []
+# 3. CARGA MASIVA DE FACTURAS (EXCEL / CSV / PDF)
+with tab3:
+    st.subheader("📂 Carga Masiva de Facturas (Archivos PDF, Excel o CSV)")
+    st.write("Puedes subir un archivo **Excel/CSV** o seleccionar **uno o varios archivos PDF** de facturas de Honduras, Guatemala o Costa Rica para extraer automáticamente sus valores.")
     
-    for f in archivo_subido:
-        if f.name.endswith('.pdf'):
-            # Extracción desde PDF
-            datos_pdf = pdf_extractor.extraer_datos_factura_pdf(f)
-            lista_facturas.append(datos_pdf)
-        elif f.name.endswith('.csv'):
-            df_c = pd.read_csv(f)
-            lista_facturas.extend(df_c.to_dict('records'))
-        elif f.name.endswith('.xlsx'):
-            df_e = pd.read_excel(f)
-            lista_facturas.extend(df_e.to_dict('records'))
+    col_plantilla1, col_plantilla2 = st.columns([2, 1])
+    with col_plantilla1:
+        st.markdown("**Si usas Excel/CSV, asegúrate de incluir estas columnas:**")
+        st.code("num_factura, cliente, fecha, pais, moneda, monto_total", language="text")
+    with col_plantilla2:
+        df_ejemplo = pd.DataFrame([
+            {"num_factura": "FACT-001", "cliente": "Empresa Alfa", "fecha": str(date.today()), "pais": "El Salvador", "moneda": "USD ($)", "monto_total": 113.00},
+            {"num_factura": "FACT-002", "cliente": "Guatemala Trans", "fecha": str(date.today()), "pais": "Guatemala", "moneda": "GTQ (Q)", "monto_total": 1120.00},
+            {"num_factura": "FACT-003", "cliente": "Logística San José", "fecha": str(date.today()), "pais": "Costa Rica", "moneda": "USD ($)", "monto_total": 565.00}
+        ])
+        buffer_ejemplo = io.BytesIO()
+        with pd.ExcelWriter(buffer_ejemplo, engine='openpyxl') as writer:
+            df_ejemplo.to_excel(writer, sheet_name='Plantilla', index=False)
+        st.download_button(
+            label="📥 Descargar Plantilla Excel Ejemplo",
+            data=buffer_ejemplo.getvalue(),
+            file_name="Plantilla_Carga_Masiva_Ventas.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+    st.divider()
+    
+    archivos_subidos = st.file_uploader(
+        "Selecciona uno o varios archivos (PDF, Excel o CSV)", 
+        type=["xlsx", "csv", "pdf"],
+        accept_multiple_files=True
+    )
+    
+    if archivos_subidos:
+        lista_facturas = []
+        
+        for archivo in archivos_subidos:
+            nombre = archivo.name
+            if nombre.endswith('.pdf'):
+                datos_pdf = pdf_extractor.extraer_datos_factura_pdf(archivo, filename=nombre)
+                lista_facturas.append(datos_pdf)
+            elif nombre.endswith('.csv'):
+                try:
+                    df_c = pd.read_csv(archivo)
+                    lista_facturas.extend(df_c.to_dict('records'))
+                except Exception as e:
+                    st.error(f"Error al leer CSV '{nombre}': {e}")
+            elif nombre.endswith('.xlsx'):
+                try:
+                    df_e = pd.read_excel(archivo)
+                    lista_facturas.extend(df_e.to_dict('records'))
+                except Exception as e:
+                    st.error(f"Error al leer Excel '{nombre}': {e}")
+                    
+        if lista_facturas:
+            df_preview = pd.DataFrame(lista_facturas)
             
-    df_preview = pd.DataFrame(lista_facturas)
-    
-    st.subheader("👁️ Vista Previa de Datos Extraídos")
-    st.dataframe(df_preview, use_container_width=True)
-    
-    if st.button("✅ OK / Confirmar y Registrar Facturas", type="primary"):
-        exitosos, errores = db.registrar_ventas_masivas(df_preview)
-        if exitosos > 0:
-            st.success(f"🎉 Se registraron exitosamente {exitosos} facturas.")
-        if errores:
-            for err in errores:
-                st.warning(f"- {err}")
-        st.rerun()
-        except Exception as e:
-            st.error(f"Ocurrió un error al procesar el archivo: {str(e)}")
+            # Asegurar columnas requeridas e iterar cálculo de neto e IVA
+            netos = []
+            ivas = []
+            for _, row in df_preview.iterrows():
+                pais_r = str(row.get('pais', 'El Salvador'))
+                tot_r = float(row.get('monto_total', 0.0))
+                
+                m_neto = row.get('monto_neto', None)
+                m_iva = row.get('monto_iva', None)
+                
+                if pd.isnull(m_neto) or pd.isnull(m_iva) or (m_neto == 0 and m_iva == 0 and tot_r > 0):
+                    n_calc, i_calc = db.calcular_desglose_iva(tot_r, pais_r)
+                    netos.append(n_calc)
+                    ivas.append(i_calc)
+                else:
+                    netos.append(float(m_neto))
+                    ivas.append(float(m_iva))
+                    
+            df_preview['monto_neto'] = netos
+            df_preview['monto_iva'] = ivas
+            
+            cols_deseadas = ['num_factura', 'cliente', 'fecha', 'pais', 'moneda', 'monto_neto', 'monto_iva', 'monto_total']
+            for c in cols_deseadas:
+                if c not in df_preview.columns:
+                    df_preview[c] = ""
+                    
+            df_preview = df_preview[cols_deseadas]
+            
+            st.subheader("👁️ Vista Previa del Archivo a Cargar")
+            st.info(f"Se identificaron **{len(df_preview)}** registros. Revisa el desglose de Neto e IVA antes de confirmar.")
+            
+            st.dataframe(df_preview, use_container_width=True)
+            
+            if st.button("✅ OK / Confirmar y Registrar Facturas en el Sistema", type="primary"):
+                exitosos, errores = db.registrar_ventas_masivas(df_preview)
+                if exitosos > 0:
+                    st.success(f"🎉 Se registraron exitosamente **{exitosos}** facturas.")
+                if errores:
+                    st.warning(f"⚠️ Omisiones o advertencias ({len(errores)}):")
+                    for err in errores:
+                        st.write(f"- {err}")
+                st.rerun()
 
 # 4. REGISTRAR ABONO
 with tab4:
