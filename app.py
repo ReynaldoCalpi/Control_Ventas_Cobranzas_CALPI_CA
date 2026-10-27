@@ -150,78 +150,46 @@ with tab2:
                     st.error(msj)
 
 # 3. CARGA MASIVA DE FACTURAS
-with tab3:
-    st.subheader("📂 Carga Masiva de Facturas desde Archivo Local")
-    st.write("Sube un archivo **Excel (.xlsx)** o **CSV (.csv)** con tus facturas. Podrás previsualizar los cálculos netos e IVA antes de confirmar el registro.")
+import pdf_extractor  # Módulo de extracción de PDF
+
+# ... dentro de tab3 (Carga Masiva):
+st.subheader("📂 Carga Masiva de Facturas (Excel, CSV o Archivos PDF)")
+st.write("Puedes subir un archivo **Excel/CSV** o seleccionar **múltiples facturas en PDF** de Honduras, Guatemala o Costa Rica para extraer automáticamente sus datos.")
+
+archivo_subido = st.file_uploader(
+    "Selecciona tu archivo (Excel, CSV o PDFs de Facturas)", 
+    type=["xlsx", "csv", "pdf"],
+    accept_multiple_files=True
+)
+
+if archivo_subido:
+    lista_facturas = []
     
-    col_plantilla1, col_plantilla2 = st.columns([2, 1])
-    with col_plantilla1:
-        st.markdown("**Estructura de columnas requerida en el archivo:**")
-        st.code("num_factura, cliente, fecha, pais, moneda, monto_total", language="text")
-    with col_plantilla2:
-        df_ejemplo = pd.DataFrame([
-            {"num_factura": "FACT-001", "cliente": "Empresa Alfa", "fecha": str(date.today()), "pais": "El Salvador", "moneda": "USD ($)", "monto_total": 113.00},
-            {"num_factura": "FACT-002", "cliente": "Guatemala Trans", "fecha": str(date.today()), "pais": "Guatemala", "moneda": "GTQ (Q)", "monto_total": 1120.00},
-            {"num_factura": "FACT-003", "cliente": "Logística San José", "fecha": str(date.today()), "pais": "Costa Rica", "moneda": "USD ($)", "monto_total": 565.00}
-        ])
-        buffer_ejemplo = io.BytesIO()
-        with pd.ExcelWriter(buffer_ejemplo, engine='openpyxl') as writer:
-            df_ejemplo.to_excel(writer, sheet_name='Plantilla', index=False)
-        st.download_button(
-            label="📥 Descargar Plantilla Excel Ejemplo",
-            data=buffer_ejemplo.getvalue(),
-            file_name="Plantilla_Carga_Masiva_Ventas.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        
-    st.divider()
-    
-    archivo_subido = st.file_uploader("Selecciona tu archivo de facturas", type=["xlsx", "csv"])
-    
-    if archivo_subido is not None:
-        try:
-            if archivo_subido.name.endswith('.csv'):
-                df_cargado = pd.read_csv(archivo_subido)
-            else:
-                df_cargado = pd.read_excel(archivo_subido)
-                
-            columnas_requeridas = {'num_factura', 'cliente', 'fecha', 'pais', 'moneda', 'monto_total'}
-            columnas_presentes = set(df_cargado.columns)
+    for f in archivo_subido:
+        if f.name.endswith('.pdf'):
+            # Extracción desde PDF
+            datos_pdf = pdf_extractor.extraer_datos_factura_pdf(f)
+            lista_facturas.append(datos_pdf)
+        elif f.name.endswith('.csv'):
+            df_c = pd.read_csv(f)
+            lista_facturas.extend(df_c.to_dict('records'))
+        elif f.name.endswith('.xlsx'):
+            df_e = pd.read_excel(f)
+            lista_facturas.extend(df_e.to_dict('records'))
             
-            if not columnas_requeridas.issubset(columnas_presentes):
-                st.error(f"El archivo no contiene todas las columnas requeridas: {columnas_requeridas - columnas_presentes}")
-            else:
-                df_preview = df_cargado.copy()
-                
-                netos = []
-                ivas = []
-                for _, row in df_preview.iterrows():
-                    pais_row = row['pais']
-                    total_row = float(row['monto_total'])
-                    neto_calc, iva_calc = db.calcular_desglose_iva(total_row, pais_row)
-                    netos.append(neto_calc)
-                    ivas.append(iva_calc)
-                    
-                df_preview['monto_neto'] = netos
-                df_preview['monto_iva'] = ivas
-                
-                cols_orden = ['num_factura', 'cliente', 'fecha', 'pais', 'moneda', 'monto_neto', 'monto_iva', 'monto_total']
-                df_preview = df_preview[cols_orden]
-                
-                st.subheader("👁️ Vista Previa del Archivo a Cargar")
-                st.info(f"Se identificaron **{len(df_preview)}** registros. Revisa el desglose de Neto e IVA calculado.")
-                
-                st.dataframe(df_preview, use_container_width=True)
-                
-                if st.button("✅ OK / Confirmar y Registrar Facturas en el Sistema", type="primary"):
-                    exitosos, errores = db.registrar_ventas_masivas(df_preview)
-                    if exitosos > 0:
-                        st.success(f"🎉 Se registraron exitosamente **{exitosos}** facturas.")
-                    if errores:
-                        st.warning(f"⚠️ Se encontraron {len(errores)} omisiones o duplicados:")
-                        for err in errores:
-                            st.write(f"- {err}")
-                    st.rerun()
+    df_preview = pd.DataFrame(lista_facturas)
+    
+    st.subheader("👁️ Vista Previa de Datos Extraídos")
+    st.dataframe(df_preview, use_container_width=True)
+    
+    if st.button("✅ OK / Confirmar y Registrar Facturas", type="primary"):
+        exitosos, errores = db.registrar_ventas_masivas(df_preview)
+        if exitosos > 0:
+            st.success(f"🎉 Se registraron exitosamente {exitosos} facturas.")
+        if errores:
+            for err in errores:
+                st.warning(f"- {err}")
+        st.rerun()
         except Exception as e:
             st.error(f"Ocurrió un error al procesar el archivo: {str(e)}")
 
