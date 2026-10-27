@@ -28,17 +28,21 @@ if "mensaje_exito" not in st.session_state:
 if "mensaje_error" not in st.session_state:
     st.session_state.mensaje_error = None
 
-def generar_excel_profesional(df_ventas, df_abonos, pais_sel, moneda_sel):
+# --- FUNCIÓN PARA GENERAR EXCEL POR PAÍS ---
+def generar_excel_por_pais(df_ventas, df_abonos, pais_sel, moneda_sel):
     wb = openpyxl.Workbook()
+    wb.remove(wb.active)  # Eliminar pestaña por defecto
     
     # Estilos Corporativos
     font_titulo = Font(name="Calibri", size=16, bold=True, color="1F4E78")
     font_subtitulo = Font(name="Calibri", size=11, italic=True, color="595959")
+    font_seccion = Font(name="Calibri", size=13, bold=True, color="1F4E78")
     font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     font_data = Font(name="Calibri", size=10)
     font_total = Font(name="Calibri", size=11, bold=True, color="1F4E78")
     
     fill_header = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    fill_sub_header = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
     fill_zebra = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
     fill_total = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
     
@@ -49,152 +53,223 @@ def generar_excel_profesional(df_ventas, df_abonos, pais_sel, moneda_sel):
     border_cell = Border(left=thin_border, right=thin_border, top=thin_border, bottom=thin_border)
     border_total = Border(top=thick_top, bottom=double_bottom, left=thin_border, right=thin_border)
 
-    # ----------------------------------------------------
-    # 1. PESTAÑA: RESUMEN DE VENTAS Y COBRANZAS
-    # ----------------------------------------------------
-    ws_ventas = wb.active
-    ws_ventas.title = "Resumen de Ventas"
-    ws_ventas.views.sheetView[0].showGridLines = True
-    
-    # Bloque de Encabezado Institucional
-    ws_ventas["A1"] = "TRANSPORTES CALPI, S.A. DE C.V."
-    ws_ventas["A1"].font = font_titulo
-    ws_ventas["A2"] = f"Resumen de Ventas y Cobranzas del Mes a la Fecha ({date.today().strftime('%d/%m/%Y')})"
-    ws_ventas["A2"].font = font_subtitulo
-    ws_ventas["A3"] = f"Filtros Aplicados: País = {pais_sel} | Moneda = {moneda_sel}"
-    ws_ventas["A3"].font = font_subtitulo
+    num_fmt = '#,##0.00;(#,##0.00);"-"'
 
-    headers_v = ["ID", "N° Factura", "Cliente / Empresa", "Fecha Emisión", "País", "Moneda Local", "Valor Neto", "Monto IVA/ISV", "Total Facturado", "Saldo Pendiente", "Estado"]
+    # 1. PESTAÑA CONSOLIDADA: RESUMEN GENERAL
+    ws_resumen = wb.create_sheet(title="Resumen General")
+    ws_resumen.views.sheetView[0].showGridLines = True
+    
+    ws_resumen["A1"] = "TRANSPORTES CALPI, S.A. DE C.V."
+    ws_resumen["A1"].font = font_titulo
+    ws_resumen["A2"] = f"Consolidado de Ventas y Cobranzas por País del Mes a la Fecha ({date.today().strftime('%d/%m/%Y')})"
+    ws_resumen["A2"].font = font_subtitulo
+    ws_resumen["A3"] = f"Filtros Aplicados: País = {pais_sel} | Moneda = {moneda_sel}"
+    ws_resumen["A3"].font = font_subtitulo
+
+    headers_r = ["País", "Moneda Local", "Cant. Facturas", "Valor Neto", "Monto IVA/ISV", "Total Facturado", "Saldo Pendiente", "Total Cobrado", "% Recuperación"]
     start_row = 5
     
-    for col_num, header_title in enumerate(headers_v, 1):
-        cell = ws_ventas.cell(row=start_row, column=col_num, value=header_title)
+    for col_num, h_title in enumerate(headers_r, 1):
+        cell = ws_resumen.cell(row=start_row, column=col_num, value=h_title)
         cell.font = font_header
         cell.fill = fill_header
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    numeric_cols_v = [7, 8, 9, 10]
-    current_row = start_row + 1
-    
-    for idx, row in df_ventas.iterrows():
-        ws_ventas.cell(row=current_row, column=1, value=row.get("id", ""))
-        ws_ventas.cell(row=current_row, column=2, value=str(row.get("num_factura", "")))
-        ws_ventas.cell(row=current_row, column=3, value=str(row.get("cliente", "")))
-        ws_ventas.cell(row=current_row, column=4, value=str(row.get("fecha", "")))
-        ws_ventas.cell(row=current_row, column=5, value=str(row.get("pais", "")))
-        ws_ventas.cell(row=current_row, column=6, value=str(row.get("moneda", "")))
-        ws_ventas.cell(row=current_row, column=7, value=float(row.get("monto_neto", 0.0)))
-        ws_ventas.cell(row=current_row, column=8, value=float(row.get("monto_iva", 0.0)))
-        ws_ventas.cell(row=current_row, column=9, value=float(row.get("monto_total", 0.0)))
-        ws_ventas.cell(row=current_row, column=10, value=float(row.get("saldo_pendiente", 0.0)))
-        ws_ventas.cell(row=current_row, column=11, value=str(row.get("estado", "")))
-        
-        for col_num in range(1, 12):
-            c = ws_ventas.cell(row=current_row, column=col_num)
-            c.font = font_data
-            c.border = border_cell
-            if idx % 2 == 1:
-                c.fill = fill_zebra
-            
-            if col_num in numeric_cols_v:
-                c.number_format = '#,##0.00;(#,##0.00);"-"'
-                c.alignment = Alignment(horizontal="right")
-            elif col_num in [1, 4, 5, 6, 11]:
-                c.alignment = Alignment(horizontal="center")
-            else:
-                c.alignment = Alignment(horizontal="left")
-                
-        current_row += 1
-
-    # Fila de Totales Generales con Fórmulas Excel
     if not df_ventas.empty:
-        ws_ventas.cell(row=current_row, column=3, value="TOTALES GENERALES").font = font_total
-        ws_ventas.cell(row=current_row, column=3).alignment = Alignment(horizontal="right")
+        df_grp = df_ventas.groupby(["pais", "moneda"]).agg(
+            facturas=("id", "count"),
+            monto_neto=("monto_neto", "sum"),
+            monto_iva=("monto_iva", "sum"),
+            monto_total=("monto_total", "sum"),
+            saldo_pendiente=("saldo_pendiente", "sum")
+        ).reset_index()
         
-        for col_num, col_letter in [(7, 'G'), (8, 'H'), (9, 'I'), (10, 'J')]:
-            cell_tot = ws_ventas.cell(row=current_row, column=col_num)
-            cell_tot.value = f"=SUM({col_letter}{start_row + 1}:{col_letter}{current_row - 1})"
-            cell_tot.font = font_total
-            cell_tot.number_format = '#,##0.00;(#,##0.00);"-"'
-            cell_tot.alignment = Alignment(horizontal="right")
+        df_grp["cobrado"] = df_grp["monto_total"] - df_grp["saldo_pendiente"]
+        df_grp["pct"] = df_grp.apply(lambda r: (r["cobrado"] / r["monto_total"]) if r["monto_total"] > 0 else 0.0, axis=1)
 
-        for col_num in range(1, 12):
-            c = ws_ventas.cell(row=current_row, column=col_num)
-            c.fill = fill_total
-            c.border = border_total
+        c_row = start_row + 1
+        for idx, r in df_grp.iterrows():
+            ws_resumen.cell(row=c_row, column=1, value=r["pais"])
+            ws_resumen.cell(row=c_row, column=2, value=r["moneda"])
+            ws_resumen.cell(row=c_row, column=3, value=r["facturas"])
+            ws_resumen.cell(row=c_row, column=4, value=float(r["monto_neto"]))
+            ws_resumen.cell(row=c_row, column=5, value=float(r["monto_iva"]))
+            ws_resumen.cell(row=c_row, column=6, value=float(r["monto_total"]))
+            ws_resumen.cell(row=c_row, column=7, value=float(r["saldo_pendiente"]))
+            ws_resumen.cell(row=c_row, column=8, value=float(r["cobrado"]))
+            ws_resumen.cell(row=c_row, column=9, value=float(r["pct"]))
 
-    for col in ws_ventas.columns:
+            for col_num in range(1, 10):
+                c = ws_resumen.cell(row=c_row, column=col_num)
+                c.font = font_data
+                c.border = border_cell
+                if idx % 2 == 1:
+                    c.fill = fill_zebra
+                
+                if col_num in [4, 5, 6, 7, 8]:
+                    c.number_format = num_fmt
+                    c.alignment = Alignment(horizontal="right")
+                elif col_num == 9:
+                    c.number_format = '0.0%'
+                    c.alignment = Alignment(horizontal="right")
+                elif col_num in [1, 2, 3]:
+                    c.alignment = Alignment(horizontal="center")
+            c_row += 1
+
+    for col in ws_resumen.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = get_column_letter(col[0].column)
-        ws_ventas.column_dimensions[col_letter].width = max(max_len + 4, 12)
+        ws_resumen.column_dimensions[col_letter].width = max(max_len + 4, 14)
 
-    # ----------------------------------------------------
-    # 2. PESTAÑA: HISTORIAL DE ABONOS Y COBRANZAS
-    # ----------------------------------------------------
-    ws_abonos = wb.create_sheet(title="Historial de Abonos")
-    ws_abonos.views.sheetView[0].showGridLines = True
-
-    ws_abonos["A1"] = "TRANSPORTES CALPI, S.A. DE C.V."
-    ws_abonos["A1"].font = font_titulo
-    ws_abonos["A2"] = f"Historial de Abonos y Cobranzas Recibidas del Mes a la Fecha ({date.today().strftime('%d/%m/%Y')})"
-    ws_abonos["A2"].font = font_subtitulo
-
-    headers_a = ["ID Abono", "ID Venta", "Fecha de Cobro", "Monto Cobrado", "Método de Pago", "Referencia / Comprobante"]
+    # 2. PESTAÑAS INDIVIDUALES POR PAÍS
+    paises_lista = df_ventas["pais"].unique().tolist() if not df_ventas.empty else [pais_sel if pais_sel != "Todos" else "El Salvador"]
     
-    for col_num, header_title in enumerate(headers_a, 1):
-        cell = ws_abonos.cell(row=start_row, column=col_num, value=header_title)
-        cell.font = font_header
-        cell.fill = fill_header
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-    current_row = start_row + 1
-    for idx, row in df_abonos.iterrows():
-        ws_abonos.cell(row=current_row, column=1, value=row.get("id", ""))
-        ws_abonos.cell(row=current_row, column=2, value=row.get("venta_id", ""))
-        ws_abonos.cell(row=current_row, column=3, value=str(row.get("fecha", "")))
-        ws_abonos.cell(row=current_row, column=4, value=float(row.get("monto", 0.0)))
-        ws_abonos.cell(row=current_row, column=5, value=str(row.get("metodo_pago", "")))
-        ws_abonos.cell(row=current_row, column=6, value=str(row.get("referencia", "")))
-
-        for col_num in range(1, 7):
-            c = ws_abonos.cell(row=current_row, column=col_num)
-            c.font = font_data
-            c.border = border_cell
-            if idx % 2 == 1:
-                c.fill = fill_zebra
-            
-            if col_num == 4:
-                c.number_format = '#,##0.00;(#,##0.00);"-"'
-                c.alignment = Alignment(horizontal="right")
-            elif col_num in [1, 2, 3]:
-                c.alignment = Alignment(horizontal="center")
-            else:
-                c.alignment = Alignment(horizontal="left")
-        current_row += 1
-
-    if not df_abonos.empty:
-        ws_abonos.cell(row=current_row, column=3, value="TOTAL ABONOS").font = font_total
-        ws_abonos.cell(row=current_row, column=3).alignment = Alignment(horizontal="right")
+    for pais_nombre in paises_lista:
+        clean_sheet_title = str(pais_nombre).replace(":", "").replace("/", "")[:31]
+        ws_pais = wb.create_sheet(title=clean_sheet_title)
+        ws_pais.views.sheetView[0].showGridLines = True
         
-        cell_tot_a = ws_abonos.cell(row=current_row, column=4)
-        cell_tot_a.value = f"=SUM(D{start_row + 1}:D{current_row - 1})"
-        cell_tot_a.font = font_total
-        cell_tot_a.number_format = '#,##0.00;(#,##0.00);"-"'
-        cell_tot_a.alignment = Alignment(horizontal="right")
+        # Encabezado por país
+        ws_pais["A1"] = f"TRANSPORTES CALPI - {pais_nombre.upper()}"
+        ws_pais["A1"].font = font_titulo
+        ws_pais["A2"] = f"Reporte Detallado de Ventas y Cobranzas del Mes a la Fecha ({date.today().strftime('%d/%m/%Y')})"
+        ws_pais["A2"].font = font_subtitulo
+        
+        df_v_p = df_ventas[df_ventas["pais"] == pais_nombre] if not df_ventas.empty else pd.DataFrame()
+        
+        # SECCIÓN 1: FACTURAS / VENTAS
+        ws_pais.cell(row=4, column=1, value="📋 FACTURAS / VENTAS REGISTRADAS").font = font_seccion
+        
+        headers_v = ["ID", "N° Factura", "Cliente / Empresa", "Fecha Emisión", "Moneda Local", "Valor Neto", "Monto IVA/ISV", "Total Facturado", "Saldo Pendiente", "Estado"]
+        start_r_v = 5
+        
+        for col_num, h_title in enumerate(headers_v, 1):
+            cell = ws_pais.cell(row=start_r_v, column=col_num, value=h_title)
+            cell.font = font_header
+            cell.fill = fill_header
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-        for col_num in range(1, 7):
-            c = ws_abonos.cell(row=current_row, column=col_num)
-            c.fill = fill_total
-            c.border = border_total
+        curr_r = start_r_v + 1
+        v_ids_pais = []
+        
+        for idx, row in df_v_p.iterrows():
+            v_id = row.get("id", "")
+            v_ids_pais.append(v_id)
+            
+            ws_pais.cell(row=curr_r, column=1, value=v_id)
+            ws_pais.cell(row=curr_r, column=2, value=str(row.get("num_factura", "")))
+            ws_pais.cell(row=curr_r, column=3, value=str(row.get("cliente", "")))
+            ws_pais.cell(row=curr_r, column=4, value=str(row.get("fecha", "")))
+            ws_pais.cell(row=curr_r, column=5, value=str(row.get("moneda", "")))
+            ws_pais.cell(row=curr_r, column=6, value=float(row.get("monto_neto", 0.0)))
+            ws_pais.cell(row=curr_r, column=7, value=float(row.get("monto_iva", 0.0)))
+            ws_pais.cell(row=curr_r, column=8, value=float(row.get("monto_total", 0.0)))
+            ws_pais.cell(row=curr_r, column=9, value=float(row.get("saldo_pendiente", 0.0)))
+            ws_pais.cell(row=curr_r, column=10, value=str(row.get("estado", "")))
 
-    for col in ws_abonos.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        col_letter = get_column_letter(col[0].column)
-        ws_abonos.column_dimensions[col_letter].width = max(max_len + 4, 14)
+            for col_num in range(1, 11):
+                c = ws_pais.cell(row=curr_r, column=col_num)
+                c.font = font_data
+                c.border = border_cell
+                if idx % 2 == 1:
+                    c.fill = fill_zebra
+                
+                if col_num in [6, 7, 8, 9]:
+                    c.number_format = num_fmt
+                    c.alignment = Alignment(horizontal="right")
+                elif col_num in [1, 4, 5, 10]:
+                    c.alignment = Alignment(horizontal="center")
+                else:
+                    c.alignment = Alignment(horizontal="left")
+            curr_r += 1
+
+        if not df_v_p.empty:
+            ws_pais.cell(row=curr_r, column=3, value=f"SUBTOTAL {pais_nombre.upper()}").font = font_total
+            ws_pais.cell(row=curr_r, column=3).alignment = Alignment(horizontal="right")
+            
+            for col_num, col_letter in [(6, 'F'), (7, 'G'), (8, 'H'), (9, 'I')]:
+                cell_tot = ws_pais.cell(row=curr_r, column=col_num)
+                cell_tot.value = f"=SUM({col_letter}{start_r_v + 1}:{col_letter}{curr_r - 1})"
+                cell_tot.font = font_total
+                cell_tot.number_format = num_fmt
+                cell_tot.alignment = Alignment(horizontal="right")
+
+            for col_num in range(1, 11):
+                c = ws_pais.cell(row=curr_r, column=col_num)
+                c.fill = fill_total
+                c.border = border_total
+            curr_r += 2
+        else:
+            ws_pais.cell(row=curr_r, column=1, value="Sin facturas registradas en este país.").font = font_subtitulo
+            curr_r += 3
+
+        # SECCIÓN 2: HISTORIAL DE ABONOS DE ESTE PAÍS
+        ws_pais.cell(row=curr_r, column=1, value="💵 HISTORIAL DE ABONOS Y COBRANZAS").font = font_seccion
+        curr_r += 1
+        
+        headers_a = ["ID Abono", "ID Venta", "Fecha de Cobro", "Monto Cobrado", "Método de Pago", "Referencia / Comprobante"]
+        start_r_a = curr_r
+        
+        for col_num, h_title in enumerate(headers_a, 1):
+            cell = ws_pais.cell(row=start_r_a, column=col_num, value=h_title)
+            cell.font = font_header
+            cell.fill = fill_sub_header
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        curr_r += 1
+        df_a_p = df_abonos[df_abonos["venta_id"].isin(v_ids_pais)] if not df_abonos.empty and v_ids_pais else pd.DataFrame()
+        
+        start_data_a = curr_r
+        for idx, row in df_a_p.iterrows():
+            ws_pais.cell(row=curr_r, column=1, value=row.get("id", ""))
+            ws_pais.cell(row=curr_r, column=2, value=row.get("venta_id", ""))
+            ws_pais.cell(row=curr_r, column=3, value=str(row.get("fecha", "")))
+            ws_pais.cell(row=curr_r, column=4, value=float(row.get("monto", 0.0)))
+            ws_pais.cell(row=curr_r, column=5, value=str(row.get("metodo_pago", "")))
+            ws_pais.cell(row=curr_r, column=6, value=str(row.get("referencia", "")))
+
+            for col_num in range(1, 7):
+                c = ws_pais.cell(row=curr_r, column=col_num)
+                c.font = font_data
+                c.border = border_cell
+                if idx % 2 == 1:
+                    c.fill = fill_zebra
+                
+                if col_num == 4:
+                    c.number_format = num_fmt
+                    c.alignment = Alignment(horizontal="right")
+                elif col_num in [1, 2, 3]:
+                    c.alignment = Alignment(horizontal="center")
+                else:
+                    c.alignment = Alignment(horizontal="left")
+            curr_r += 1
+
+        if not df_a_p.empty:
+            ws_pais.cell(row=curr_r, column=3, value="TOTAL COBRADO").font = font_total
+            ws_pais.cell(row=curr_r, column=3).alignment = Alignment(horizontal="right")
+            
+            cell_tot_a = ws_pais.cell(row=curr_r, column=4)
+            cell_tot_a.value = f"=SUM(D{start_data_a}:D{curr_r - 1})"
+            cell_tot_a.font = font_total
+            cell_tot_a.number_format = num_fmt
+            cell_tot_a.alignment = Alignment(horizontal="right")
+
+            for col_num in range(1, 7):
+                c = ws_pais.cell(row=curr_r, column=col_num)
+                c.fill = fill_total
+                c.border = border_total
+        else:
+            ws_pais.cell(row=curr_r, column=1, value="Sin abonos registrados para este país.").font = font_subtitulo
+
+        for col in ws_pais.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            ws_pais.column_dimensions[col_letter].width = max(max_len + 4, 14)
 
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
+
 
 st.title("🌎 Control de Ventas y Cuentas por Cobrar (Multipaís)")
 st.caption("Gestión regional con desglose automático de IVA/ISV, múltiples monedas y carga masiva")
@@ -643,17 +718,17 @@ with tab4:
                     else:
                         st.error(msj)
 
-# 5. EXPORTACIÓN A EXCEL PROFESIONAL
+# 5. EXPORTACIÓN A EXCEL POR PAÍS
 with tab5:
     st.subheader("Exportar Reportes Consolidados")
-    st.write("Genera y descarga un reporte profesional en Excel (`.xlsx`) estilizado con encabezados institucionales, sumatorias automáticas y formato de número contable.")
+    st.write("Genera y descarga el reporte en Excel (`.xlsx`) organizado por **pestañas independientes por cada país** y un **Resumen General** consolidado.")
     
-    excel_bytes = generar_excel_profesional(df_ventas, df_abonos, pais_seleccionado, moneda_seleccionada)
+    excel_bytes = generar_excel_por_pais(df_ventas, df_abonos, pais_seleccionado, moneda_seleccionada)
     
     st.download_button(
-        label="📊 Descargar Reporte Excel Profesional (.xlsx)",
+        label="📊 Descargar Reporte Excel por País (.xlsx)",
         data=excel_bytes,
-        file_name=f"Reporte_Ventas_Cobranzas_{pais_seleccionado}_{date.today().strftime('%Y%m%d')}.xlsx",
+        file_name=f"Reporte_Ventas_Cobranzas_PorPais_{date.today().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary"
     )
