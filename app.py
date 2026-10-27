@@ -6,7 +6,7 @@ from datetime import date
 import database as db
 import pdf_extractor
 
-# Forzar la recarga del módulo extractor de PDF
+# Recargar pdf_extractor
 importlib.reload(pdf_extractor)
 
 st.set_page_config(
@@ -18,7 +18,7 @@ st.set_page_config(
 # Inicializar Base de Datos
 db.init_db()
 
-# Inicializar Estados de Sesión para Notificaciones
+# Session State Notificaciones
 if "mensaje_exito" not in st.session_state:
     st.session_state.mensaje_exito = None
 if "mensaje_error" not in st.session_state:
@@ -78,7 +78,6 @@ col5.metric("% Recuperación", f"{pct_recuperacion:.1f}%")
 
 st.divider()
 
-# Mostrar notificaciones persistentes si existen
 if st.session_state.mensaje_exito:
     st.success(st.session_state.mensaje_exito)
     st.session_state.mensaje_exito = None
@@ -98,7 +97,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 
 # 1. TABLA PRINCIPAL DE VENTAS
 with tab1:
-    st.subheader(f"Listado de Facturas Registradas (Filtro: {pais_seleccionado} / {moneda_seleccionada})")
+    st.subheader(f"Listado de Facturas Registradas ({pais_seleccionado} / {moneda_seleccionada})")
     
     col_filtro1, col_filtro2 = st.columns(2)
     with col_filtro1:
@@ -137,6 +136,75 @@ with tab1:
         },
         hide_index=True
     )
+    
+    # SECCIÓN DE EDICIÓN Y ELIMINACIÓN DE FACTURAS
+    st.divider()
+    with st.expander("⚙️ Modificar o Eliminar una Factura Registrada"):
+        if df_ventas.empty:
+            st.info("No hay facturas registradas disponibles para editar o eliminar.")
+        else:
+            opciones_edicion = {
+                row['id']: f"[{row['pais']}] Factura: {row['num_factura']} | Cliente: {row['cliente']} | Total: {row['moneda']} {row['monto_total']:,.2f}"
+                for _, row in df_ventas.iterrows()
+            }
+            
+            id_factura_sel = st.selectbox(
+                "Selecciona la factura que deseas modificar o eliminar:",
+                options=list(opciones_edicion.keys()),
+                format_func=lambda x: opciones_edicion[x],
+                key="sel_factura_gestion"
+            )
+            
+            factura_sel = df_ventas[df_ventas['id'] == id_factura_sel].iloc[0]
+            
+            col_ed1, col_ed2 = st.columns(2)
+            
+            with col_ed1:
+                st.markdown("#### ✏️ Editar Datos de la Factura")
+                with st.form("form_editar_factura"):
+                    e_num_factura = st.text_input("Número de Factura / DTE", value=str(factura_sel['num_factura']))
+                    e_cliente = st.text_input("Cliente / Empresa", value=str(factura_sel['cliente']))
+                    
+                    try:
+                        fecha_val = date.fromisoformat(str(factura_sel['fecha']))
+                    except Exception:
+                        fecha_val = date.today()
+                        
+                    e_fecha = st.date_input("Fecha de Emisión", value=fecha_val)
+                    
+                    lista_paises = ["El Salvador", "Guatemala", "Honduras", "Nicaragua", "Costa Rica"]
+                    idx_pais = lista_paises.index(factura_sel['pais']) if factura_sel['pais'] in lista_paises else 0
+                    e_pais = st.selectbox("País", lista_paises, index=idx_pais)
+                    
+                    monedas_disp = db.MONEDAS_POR_PAIS[e_pais]
+                    idx_moneda = monedas_disp.index(factura_sel['moneda']) if factura_sel['moneda'] in monedas_disp else 0
+                    e_moneda = st.selectbox("Moneda", monedas_disp, index=idx_moneda)
+                    
+                    e_monto_total = st.number_input("Monto Total Incorporado con IVA", value=float(factura_sel['monto_total']), min_value=0.01, step=10.0, format="%.2f")
+                    
+                    btn_actualizar = st.form_submit_button("💾 Guardar Cambios")
+                    if btn_actualizar:
+                        exito, msj = db.actualizar_venta(
+                            id_factura_sel, e_num_factura, e_cliente, e_fecha, e_pais, e_moneda, e_monto_total
+                        )
+                        if exito:
+                            st.session_state.mensaje_exito = msj
+                            st.rerun()
+                        else:
+                            st.error(msj)
+                            
+            with col_ed2:
+                st.markdown("#### 🗑️ Eliminar Factura")
+                st.warning("⚠️ **Atención:** Al eliminar esta factura, también se eliminarán todos los abonos registrados vinculados a ella de forma permanente.")
+                
+                confirmar_eliminar = st.checkbox(f"Confirmo que deseo eliminar la factura N° {factura_sel['num_factura']}")
+                if st.button("🔴 Eliminar Definitivamente", type="primary", disabled=not confirmar_eliminar):
+                    exito, msj = db.eliminar_venta(id_factura_sel)
+                    if exito:
+                        st.session_state.mensaje_exito = msj
+                        st.rerun()
+                    else:
+                        st.error(msj)
 
 # 2. NUEVA VENTA INDIVIDUAL
 with tab2:
