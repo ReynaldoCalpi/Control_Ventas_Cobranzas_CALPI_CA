@@ -25,7 +25,7 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Tabla de Ventas / Facturas con soporte multipaís y desglose IVA
+    # Tabla de Ventas / Facturas
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS ventas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,22 +111,28 @@ def registrar_venta(num_factura, cliente, fecha, pais, moneda, monto_total, mont
         conn.close()
 
 def registrar_ventas_masivas(df_ventas):
-    """
-    Registra un conjunto de facturas procesadas desde la vista previa.
-    """
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     exitosos = 0
     errores = []
     
     for idx, row in df_ventas.iterrows():
-        num_factura = str(row['num_factura']).strip()
-        cliente = str(row['cliente']).strip()
-        fecha = str(row['fecha']).strip()
-        pais = str(row['pais']).strip()
-        moneda = str(row['moneda']).strip()
-        monto_total = float(row['monto_total'])
+        num_factura = str(row['num_factura']).strip() if pd.notnull(row['num_factura']) else ""
+        cliente = str(row['cliente']).strip() if pd.notnull(row['cliente']) else ""
+        fecha = str(row['fecha']).strip() if pd.notnull(row['fecha']) else ""
+        pais = str(row['pais']).strip() if pd.notnull(row['pais']) else "El Salvador"
+        moneda = str(row['moneda']).strip() if pd.notnull(row['moneda']) else "USD ($)"
         
+        try:
+            monto_total = float(row['monto_total'])
+        except (ValueError, TypeError):
+            errores.append(f"Fila {idx+1}: Monto total inválido para factura '{num_factura}'.")
+            continue
+
+        if not num_factura or not cliente:
+            errores.append(f"Fila {idx+1}: Faltan datos requeridos (Número de Factura o Cliente).")
+            continue
+            
         monto_neto = float(row['monto_neto']) if 'monto_neto' in row and pd.notnull(row['monto_neto']) else None
         monto_iva = float(row['monto_iva']) if 'monto_iva' in row and pd.notnull(row['monto_iva']) else None
         
@@ -140,9 +146,9 @@ def registrar_ventas_masivas(df_ventas):
             ''', (num_factura, cliente, fecha, pais, moneda, monto_neto, monto_iva, monto_total, monto_total))
             exitosos += 1
         except sqlite3.IntegrityError:
-            errores.append(f"Factura '{num_factura}' ya existe.")
+            errores.append(f"La factura '{num_factura}' ya existe en el sistema.")
         except Exception as e:
-            errores.append(f"Error en fila {idx+1} ({num_factura}): {str(e)}")
+            errores.append(f"Error en factura '{num_factura}': {str(e)}")
             
     conn.commit()
     conn.close()
