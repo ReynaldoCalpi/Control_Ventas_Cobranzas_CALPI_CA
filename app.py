@@ -150,14 +150,14 @@ with tab2:
                 else:
                     st.error(msj)
 
-# 3. CARGA MASIVA DE FACTURAS (EXCEL / CSV / PDF)
+# 3. CARGA MASIVA E INTERACTIVA DE FACTURAS (EXCEL / CSV / PDF)
 with tab3:
-    st.subheader("📂 Carga Masiva de Facturas (Archivos PDF, Excel o CSV)")
-    st.write("Puedes subir un archivo **Excel/CSV** o seleccionar **uno o varios archivos PDF** de facturas de Honduras, Guatemala o Costa Rica para extraer automáticamente sus valores.")
+    st.subheader("📂 Carga Masiva y Revisión Interactiva (PDF, Excel o CSV)")
+    st.write("Sube tus archivos PDF o listas en Excel/CSV. Podrás **editar cualquier celda directamente en la tabla** antes de guardar los registros.")
     
     col_plantilla1, col_plantilla2 = st.columns([2, 1])
     with col_plantilla1:
-        st.markdown("**Si usas Excel/CSV, asegúrate de incluir estas columnas:**")
+        st.markdown("**Si usas Excel/CSV, asegura la estructura de columnas:**")
         st.code("num_factura, cliente, fecha, pais, moneda, monto_total", language="text")
     with col_plantilla2:
         df_ejemplo = pd.DataFrame([
@@ -205,13 +205,13 @@ with tab3:
                     st.error(f"Error al leer Excel '{nombre}': {e}")
                     
         if lista_facturas:
-            df_preview = pd.DataFrame(lista_facturas)
+            df_base = pd.DataFrame(lista_facturas)
             
             # Asegurar columnas requeridas e iterar cálculo de neto e IVA
             netos = []
             ivas = []
-            for _, row in df_preview.iterrows():
-                pais_r = str(row.get('pais', 'El Salvador'))
+            for _, row in df_base.iterrows():
+                pais_r = str(row.get('pais', 'Honduras'))
                 tot_r = float(row.get('monto_total', 0.0))
                 
                 m_neto = row.get('monto_neto', None)
@@ -225,23 +225,39 @@ with tab3:
                     netos.append(float(m_neto))
                     ivas.append(float(m_iva))
                     
-            df_preview['monto_neto'] = netos
-            df_preview['monto_iva'] = ivas
+            df_base['monto_neto'] = netos
+            df_base['monto_iva'] = ivas
             
             cols_deseadas = ['num_factura', 'cliente', 'fecha', 'pais', 'moneda', 'monto_neto', 'monto_iva', 'monto_total']
             for c in cols_deseadas:
-                if c not in df_preview.columns:
-                    df_preview[c] = ""
+                if c not in df_base.columns:
+                    df_base[c] = ""
                     
-            df_preview = df_preview[cols_deseadas]
+            df_base = df_base[cols_deseadas]
             
-            st.subheader("👁️ Vista Previa del Archivo a Cargar")
-            st.info(f"Se identificaron **{len(df_preview)}** registros. Revisa el desglose de Neto e IVA antes de confirmar.")
+            st.subheader("📝 Vista Previa Editable")
+            st.info("💡 **Puedes hacer clic sobre cualquier celda** (Número de Factura, Cliente, Importes) para corregir o ingresar manualmente valores antes de presionar Confirmar.")
             
-            st.dataframe(df_preview, use_container_width=True)
+            # TABLA INTERACTIVA EDITABLE
+            df_editado = st.data_editor(
+                df_base,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "num_factura": st.column_config.TextColumn("N° Factura", required=True),
+                    "cliente": st.column_config.TextColumn("Cliente / Empresa", required=True),
+                    "fecha": st.column_config.TextColumn("Fecha"),
+                    "pais": st.column_config.SelectboxColumn("País", options=["El Salvador", "Guatemala", "Honduras", "Nicaragua", "Costa Rica"]),
+                    "moneda": st.column_config.SelectboxColumn("Moneda", options=["USD ($)", "GTQ (Q)", "HNL (L)"]),
+                    "monto_neto": st.column_config.NumberColumn("Valor Neto", format="%.2f"),
+                    "monto_iva": st.column_config.NumberColumn("Monto IVA/ISV", format="%.2f"),
+                    "monto_total": st.column_config.NumberColumn("Monto Total", format="%.2f", required=True)
+                },
+                hide_index=True
+            )
             
             if st.button("✅ OK / Confirmar y Registrar Facturas en el Sistema", type="primary"):
-                exitosos, errores = db.registrar_ventas_masivas(df_preview)
+                exitosos, errores = db.registrar_ventas_masivas(df_editado)
                 if exitosos > 0:
                     st.success(f"🎉 Se registraron exitosamente **{exitosos}** facturas.")
                 if errores:
