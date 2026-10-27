@@ -1,9 +1,13 @@
 import streamlit as st
 import pandas as pd
 import io
+import importlib
 from datetime import date
 import database as db
 import pdf_extractor
+
+# Forzar la recarga del módulo pdf_extractor para actualizar la memoria de Streamlit
+importlib.reload(pdf_extractor)
 
 st.set_page_config(
     page_title="Control de Ventas y Cobranzas - Centroamérica",
@@ -207,7 +211,7 @@ with tab3:
         if lista_facturas:
             df_base = pd.DataFrame(lista_facturas)
             
-            # Asegurar columnas requeridas e iterar cálculo de neto e IVA
+            # Asegurar columnas e importes calculados
             netos = []
             ivas = []
             for _, row in df_base.iterrows():
