@@ -23,12 +23,10 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Verificar estructura actual de la tabla 'ventas'
     cursor.execute("PRAGMA table_info(ventas)")
     columns = [column[1] for column in cursor.fetchall()]
     
     if not columns:
-        # Crear la tabla completa si no existía
         cursor.execute('''
             CREATE TABLE ventas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,7 +43,6 @@ def init_db():
             )
         ''')
     else:
-        # Migración automática: Agregar columnas si la tabla se creó con el esquema anterior
         columnas_requeridas = {
             "pais": "TEXT DEFAULT 'El Salvador'",
             "moneda": "TEXT DEFAULT 'USD ($)'",
@@ -56,7 +53,6 @@ def init_db():
             if col not in columns:
                 cursor.execute(f"ALTER TABLE ventas ADD COLUMN {col} {col_type}")
     
-    # 2. Crear tabla de abonos si no existe
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS abonos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -206,3 +202,52 @@ def registrar_abono(venta_id, fecha, monto, metodo_pago, referencia):
     conn.commit()
     conn.close()
     return True, "Abono aplicado exitosamente."
+
+def eliminar_venta(venta_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM abonos WHERE venta_id = ?", (venta_id,))
+        cursor.execute("DELETE FROM ventas WHERE id = ?", (venta_id,))
+        conn.commit()
+        return True, "Factura y sus abonos asociados fueron eliminados correctamente."
+    except Exception as e:
+        return False, f"Error al eliminar la factura: {str(e)}"
+    finally:
+        conn.close()
+
+def actualizar_venta(venta_id, num_factura, cliente, fecha, pais, moneda, monto_total):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        monto_neto, monto_iva = calcular_desglose_iva(monto_total, pais)
+        
+        cursor.execute("SELECT COALESCE(SUM(monto), 0) FROM abonos WHERE venta_id = ?", (venta_id,))
+        total_abonos = cursor.fetchone()[0]
+        
+        nuevo_saldo = round(monto_total - total_abonos, 2)
+        if nuevo_saldo < 0:
+            conn.close()
+            return False, f"El nuevo monto total ({monto_total:,.2f}) es menor que la suma de abonos ya recibidos ({total_abonos:,.2f})."
+        
+        if total_abonos > 0:
+            nuevo_estado = "Pagado" if nuevo_saldo == 0 else "Parcial"
+        else:
+            nuevo_estado = "Pendiente"
+            
+        cursor.execute('''
+            UPDATE ventas 
+            SET num_factura = ?, cliente = ?, fecha = ?, pais = ?, moneda = ?, 
+                monto_neto = ?, monto_iva = ?, monto_total = ?, saldo_pendiente = ?, estado = ?
+            WHERE id = ?
+        ''', (str(num_factura).strip(), str(cliente).strip(), str(fecha).strip(), str(pais).strip(), str(moneda).strip(), 
+               monto_neto, monto_iva, monto_total, nuevo_saldo, nuevo_estado, venta_id))
+        
+        conn.commit()
+        return True, f"Factura '{num_factura}' actualizada correctamente."
+    except sqlite3.IntegrityError:
+        return False, f"El número de factura '{num_factura}' ya pertenece a otra factura."
+    except Exception as e:
+        return False, f"Error al actualizar la factura: {str(e)}"
+    finally:
+        conn.close()
