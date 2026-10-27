@@ -3,6 +3,10 @@ import pandas as pd
 import io
 import importlib
 from datetime import date
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
 import database as db
 import pdf_extractor
 
@@ -23,6 +27,174 @@ if "mensaje_exito" not in st.session_state:
     st.session_state.mensaje_exito = None
 if "mensaje_error" not in st.session_state:
     st.session_state.mensaje_error = None
+
+def generar_excel_profesional(df_ventas, df_abonos, pais_sel, moneda_sel):
+    wb = openpyxl.Workbook()
+    
+    # Estilos Corporativos
+    font_titulo = Font(name="Calibri", size=16, bold=True, color="1F4E78")
+    font_subtitulo = Font(name="Calibri", size=11, italic=True, color="595959")
+    font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    font_data = Font(name="Calibri", size=10)
+    font_total = Font(name="Calibri", size=11, bold=True, color="1F4E78")
+    
+    fill_header = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    fill_zebra = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
+    fill_total = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    
+    thin_border = Side(style='thin', color='D9D9D9')
+    thick_top = Side(style='thin', color='1F4E78')
+    double_bottom = Side(style='double', color='1F4E78')
+    
+    border_cell = Border(left=thin_border, right=thin_border, top=thin_border, bottom=thin_border)
+    border_total = Border(top=thick_top, bottom=double_bottom, left=thin_border, right=thin_border)
+
+    # ----------------------------------------------------
+    # 1. PESTAÑA: RESUMEN DE VENTAS Y COBRANZAS
+    # ----------------------------------------------------
+    ws_ventas = wb.active
+    ws_ventas.title = "Resumen de Ventas"
+    ws_ventas.views.sheetView[0].showGridLines = True
+    
+    # Bloque de Encabezado Institucional
+    ws_ventas["A1"] = "TRANSPORTES CALPI, S.A. DE C.V."
+    ws_ventas["A1"].font = font_titulo
+    ws_ventas["A2"] = f"Resumen de Ventas y Cobranzas del Mes a la Fecha ({date.today().strftime('%d/%m/%Y')})"
+    ws_ventas["A2"].font = font_subtitulo
+    ws_ventas["A3"] = f"Filtros Aplicados: País = {pais_sel} | Moneda = {moneda_sel}"
+    ws_ventas["A3"].font = font_subtitulo
+
+    headers_v = ["ID", "N° Factura", "Cliente / Empresa", "Fecha Emisión", "País", "Moneda Local", "Valor Neto", "Monto IVA/ISV", "Total Facturado", "Saldo Pendiente", "Estado"]
+    start_row = 5
+    
+    for col_num, header_title in enumerate(headers_v, 1):
+        cell = ws_ventas.cell(row=start_row, column=col_num, value=header_title)
+        cell.font = font_header
+        cell.fill = fill_header
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    numeric_cols_v = [7, 8, 9, 10]
+    current_row = start_row + 1
+    
+    for idx, row in df_ventas.iterrows():
+        ws_ventas.cell(row=current_row, column=1, value=row.get("id", ""))
+        ws_ventas.cell(row=current_row, column=2, value=str(row.get("num_factura", "")))
+        ws_ventas.cell(row=current_row, column=3, value=str(row.get("cliente", "")))
+        ws_ventas.cell(row=current_row, column=4, value=str(row.get("fecha", "")))
+        ws_ventas.cell(row=current_row, column=5, value=str(row.get("pais", "")))
+        ws_ventas.cell(row=current_row, column=6, value=str(row.get("moneda", "")))
+        ws_ventas.cell(row=current_row, column=7, value=float(row.get("monto_neto", 0.0)))
+        ws_ventas.cell(row=current_row, column=8, value=float(row.get("monto_iva", 0.0)))
+        ws_ventas.cell(row=current_row, column=9, value=float(row.get("monto_total", 0.0)))
+        ws_ventas.cell(row=current_row, column=10, value=float(row.get("saldo_pendiente", 0.0)))
+        ws_ventas.cell(row=current_row, column=11, value=str(row.get("estado", "")))
+        
+        for col_num in range(1, 12):
+            c = ws_ventas.cell(row=current_row, column=col_num)
+            c.font = font_data
+            c.border = border_cell
+            if idx % 2 == 1:
+                c.fill = fill_zebra
+            
+            if col_num in numeric_cols_v:
+                c.number_format = '#,##0.00;(#,##0.00);"-"'
+                c.alignment = Alignment(horizontal="right")
+            elif col_num in [1, 4, 5, 6, 11]:
+                c.alignment = Alignment(horizontal="center")
+            else:
+                c.alignment = Alignment(horizontal="left")
+                
+        current_row += 1
+
+    # Fila de Totales Generales con Fórmulas Excel
+    if not df_ventas.empty:
+        ws_ventas.cell(row=current_row, column=3, value="TOTALES GENERALES").font = font_total
+        ws_ventas.cell(row=current_row, column=3).alignment = Alignment(horizontal="right")
+        
+        for col_num, col_letter in [(7, 'G'), (8, 'H'), (9, 'I'), (10, 'J')]:
+            cell_tot = ws_ventas.cell(row=current_row, column=col_num)
+            cell_tot.value = f"=SUM({col_letter}{start_row + 1}:{col_letter}{current_row - 1})"
+            cell_tot.font = font_total
+            cell_tot.number_format = '#,##0.00;(#,##0.00);"-"'
+            cell_tot.alignment = Alignment(horizontal="right")
+
+        for col_num in range(1, 12):
+            c = ws_ventas.cell(row=current_row, column=col_num)
+            c.fill = fill_total
+            c.border = border_total
+
+    for col in ws_ventas.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws_ventas.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+    # ----------------------------------------------------
+    # 2. PESTAÑA: HISTORIAL DE ABONOS Y COBRANZAS
+    # ----------------------------------------------------
+    ws_abonos = wb.create_sheet(title="Historial de Abonos")
+    ws_abonos.views.sheetView[0].showGridLines = True
+
+    ws_abonos["A1"] = "TRANSPORTES CALPI, S.A. DE C.V."
+    ws_abonos["A1"].font = font_titulo
+    ws_abonos["A2"] = f"Historial de Abonos y Cobranzas Recibidas del Mes a la Fecha ({date.today().strftime('%d/%m/%Y')})"
+    ws_abonos["A2"].font = font_subtitulo
+
+    headers_a = ["ID Abono", "ID Venta", "Fecha de Cobro", "Monto Cobrado", "Método de Pago", "Referencia / Comprobante"]
+    
+    for col_num, header_title in enumerate(headers_a, 1):
+        cell = ws_abonos.cell(row=start_row, column=col_num, value=header_title)
+        cell.font = font_header
+        cell.fill = fill_header
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    current_row = start_row + 1
+    for idx, row in df_abonos.iterrows():
+        ws_abonos.cell(row=current_row, column=1, value=row.get("id", ""))
+        ws_abonos.cell(row=current_row, column=2, value=row.get("venta_id", ""))
+        ws_abonos.cell(row=current_row, column=3, value=str(row.get("fecha", "")))
+        ws_abonos.cell(row=current_row, column=4, value=float(row.get("monto", 0.0)))
+        ws_abonos.cell(row=current_row, column=5, value=str(row.get("metodo_pago", "")))
+        ws_abonos.cell(row=current_row, column=6, value=str(row.get("referencia", "")))
+
+        for col_num in range(1, 7):
+            c = ws_abonos.cell(row=current_row, column=col_num)
+            c.font = font_data
+            c.border = border_cell
+            if idx % 2 == 1:
+                c.fill = fill_zebra
+            
+            if col_num == 4:
+                c.number_format = '#,##0.00;(#,##0.00);"-"'
+                c.alignment = Alignment(horizontal="right")
+            elif col_num in [1, 2, 3]:
+                c.alignment = Alignment(horizontal="center")
+            else:
+                c.alignment = Alignment(horizontal="left")
+        current_row += 1
+
+    if not df_abonos.empty:
+        ws_abonos.cell(row=current_row, column=3, value="TOTAL ABONOS").font = font_total
+        ws_abonos.cell(row=current_row, column=3).alignment = Alignment(horizontal="right")
+        
+        cell_tot_a = ws_abonos.cell(row=current_row, column=4)
+        cell_tot_a.value = f"=SUM(D{start_row + 1}:D{current_row - 1})"
+        cell_tot_a.font = font_total
+        cell_tot_a.number_format = '#,##0.00;(#,##0.00);"-"'
+        cell_tot_a.alignment = Alignment(horizontal="right")
+
+        for col_num in range(1, 7):
+            c = ws_abonos.cell(row=current_row, column=col_num)
+            c.fill = fill_total
+            c.border = border_total
+
+    for col in ws_abonos.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws_abonos.column_dimensions[col_letter].width = max(max_len + 4, 14)
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
 
 st.title("🌎 Control de Ventas y Cuentas por Cobrar (Multipaís)")
 st.caption("Gestión regional con desglose automático de IVA/ISV, múltiples monedas y carga masiva")
@@ -56,7 +228,6 @@ st.sidebar.markdown("- 🇨🇷 Costa Rica: 13% IVA (USD $)")
 df_ventas = db.obtener_ventas(pais=pais_seleccionado, moneda=moneda_seleccionada)
 df_abonos = db.obtener_abonos()
 
-# Mapeo de símbolos de moneda y banderas por país
 SIMBOLOS_MONEDA = {
     "USD ($)": "$",
     "GTQ (Q)": "Q",
@@ -74,7 +245,7 @@ BANDERAS_PAIS = {
 def get_simbolo(moneda):
     return SIMBOLOS_MONEDA.get(moneda, "$")
 
-# --- DASHBOARD DE MÉTRICAS (RESPETANDO MONEDA LOCAL) ---
+# --- DASHBOARD DE MÉTRICAS ---
 st.subheader("📊 Resumen General del Dashboard")
 
 if df_ventas.empty:
@@ -83,7 +254,6 @@ else:
     monedas_presentes = df_ventas['moneda'].unique()
     paises_presentes = df_ventas['pais'].unique()
 
-    # CASO 1: Una sola moneda / país seleccionado -> KPIs directos con la divisa local
     if len(monedas_presentes) == 1 and (pais_seleccionado != "Todos" or len(paises_presentes) == 1):
         moneda_actual = monedas_presentes[0]
         simbolo = get_simbolo(moneda_actual)
@@ -105,7 +275,6 @@ else:
         col4.metric("Saldo Pendiente", f"{simbolo} {total_pendiente:,.2f}", delta_color="inverse")
         col5.metric("% Recuperación", f"{pct_recuperacion:.1f}%")
 
-    # CASO 2: Múltiples monedas / Vista "Todos" -> Desglose obligatorio por País y Moneda
     else:
         st.info("📌 *Cifras agrupadas por país y moneda local para garantizar precisión financiera sin mezclar divisas.*")
         
@@ -122,7 +291,6 @@ else:
             lambda r: (r["cobrado"] / r["monto_total"] * 100) if r["monto_total"] > 0 else 0.0, axis=1
         )
 
-        # Mostrar bloque individual por cada país / moneda presente
         for _, row in df_resumen.iterrows():
             p_nom = row["pais"]
             m_nom = row["moneda"]
@@ -138,7 +306,6 @@ else:
             c5.metric("% Recuperación", f"{row['pct_recuperacion']:.1f}%")
             st.write("")
 
-        # Tabla Resumen Consolidado
         with st.expander("📋 Ver Cuadro Resumen Consolidado por País y Moneda Local", expanded=False):
             st.dataframe(
                 df_resumen,
@@ -159,7 +326,6 @@ else:
 
 st.divider()
 
-# Mostrar notificaciones si existen
 if st.session_state.mensaje_exito:
     st.success(st.session_state.mensaje_exito)
     st.session_state.mensaje_exito = None
@@ -219,7 +385,6 @@ with tab1:
         hide_index=True
     )
     
-    # MODIFICAR O ELIMINAR FACTURA
     st.divider()
     with st.expander("⚙️ Modificar o Eliminar una Factura Registrada"):
         if df_ventas.empty:
@@ -478,20 +643,17 @@ with tab4:
                     else:
                         st.error(msj)
 
-# 5. EXPORTACIÓN A EXCEL
+# 5. EXPORTACIÓN A EXCEL PROFESIONAL
 with tab5:
     st.subheader("Exportar Reportes Consolidados")
-    st.write("Genera un reporte completo en Excel (`.xlsx`) filtrado por tus parámetros regionales actualizados.")
+    st.write("Genera y descarga un reporte profesional en Excel (`.xlsx`) estilizado con encabezados institucionales, sumatorias automáticas y formato de número contable.")
     
-    if st.button("📊 Generar Reporte Excel"):
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_ventas.to_excel(writer, sheet_name='Ventas_Facturas', index=False)
-            df_abonos.to_excel(writer, sheet_name='Historial_Abonos', index=False)
-            
-        st.download_button(
-            label="💾 Descargar Archivo Excel",
-            data=buffer.getvalue(),
-            file_name=f"Reporte_Ventas_{pais_seleccionado}_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    excel_bytes = generar_excel_profesional(df_ventas, df_abonos, pais_seleccionado, moneda_seleccionada)
+    
+    st.download_button(
+        label="📊 Descargar Reporte Excel Profesional (.xlsx)",
+        data=excel_bytes,
+        file_name=f"Reporte_Ventas_Cobranzas_{pais_seleccionado}_{date.today().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
