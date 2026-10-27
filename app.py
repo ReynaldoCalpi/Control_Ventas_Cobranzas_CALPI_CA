@@ -6,7 +6,7 @@ from datetime import date
 import database as db
 import pdf_extractor
 
-# Recargar pdf_extractor
+# Recargar pdf_extractor para actualización en caliente
 importlib.reload(pdf_extractor)
 
 st.set_page_config(
@@ -18,14 +18,14 @@ st.set_page_config(
 # Inicializar Base de Datos
 db.init_db()
 
-# Session State Notificaciones
+# Session State para Notificaciones
 if "mensaje_exito" not in st.session_state:
     st.session_state.mensaje_exito = None
 if "mensaje_error" not in st.session_state:
     st.session_state.mensaje_error = None
 
 st.title("🌎 Control de Ventas y Cuentas por Cobrar (Multipaís)")
-st.caption("Gestión regional con desglose automático de IVA, múltiples monedas y carga masiva")
+st.caption("Gestión regional con desglose automático de IVA/ISV, múltiples monedas y carga masiva")
 
 # --- FILTROS GLOBALES EN BARRA LATERAL ---
 st.sidebar.header("📌 Filtros Regionales")
@@ -46,38 +46,120 @@ moneda_seleccionada = st.sidebar.selectbox("Seleccionar Moneda", monedas_opcione
 
 st.sidebar.divider()
 st.sidebar.markdown("**ℹ️ Tasas de IVA / ISV Aplicables:**")
-st.sidebar.markdown("- 🇸🇻 El Salvador: 13% IVA (USD)")
-st.sidebar.markdown("- 🇬🇹 Guatemala: 12% IVA (GTQ / USD)")
-st.sidebar.markdown("- 🇭🇳 Honduras: 15% ISV (HNL)")
-st.sidebar.markdown("- 🇳🇮 Nicaragua: 15% IVA (USD - Manual)")
-st.sidebar.markdown("- 🇨🇷 Costa Rica: 13% IVA (USD)")
+st.sidebar.markdown("- 🇸🇻 El Salvador: 13% IVA (USD $)")
+st.sidebar.markdown("- 🇬🇹 Guatemala: 12% IVA (GTQ Q / USD $)")
+st.sidebar.markdown("- 🇭🇳 Honduras: 15% ISV (HNL L.)")
+st.sidebar.markdown("- 🇳🇮 Nicaragua: 15% IVA (USD $)")
+st.sidebar.markdown("- 🇨🇷 Costa Rica: 13% IVA (USD $)")
 
-# Cargar datos filtrados
+# Cargar datos filtrados desde SQLite
 df_ventas = db.obtener_ventas(pais=pais_seleccionado, moneda=moneda_seleccionada)
 df_abonos = db.obtener_abonos()
 
-# --- MÉTRICAS GENERALES (KPIs) ---
-if not df_ventas.empty:
-    total_neto = df_ventas['monto_neto'].sum()
-    total_iva = df_ventas['monto_iva'].sum()
-    total_facturado = df_ventas['monto_total'].sum()
-    total_pendiente = df_ventas['saldo_pendiente'].sum()
-    total_cobrado = total_facturado - total_pendiente
-    pct_recuperacion = (total_cobrado / total_facturado * 100) if total_facturado > 0 else 0
+# Mapeo de símbolos de moneda y banderas por país
+SIMBOLOS_MONEDA = {
+    "USD ($)": "$",
+    "GTQ (Q)": "Q",
+    "HNL (L)": "L."
+}
+
+BANDERAS_PAIS = {
+    "El Salvador": "🇸🇻",
+    "Guatemala": "🇬🇹",
+    "Honduras": "🇭🇳",
+    "Nicaragua": "🇳🇮",
+    "Costa Rica": "🇨🇷"
+}
+
+def get_simbolo(moneda):
+    return SIMBOLOS_MONEDA.get(moneda, "$")
+
+# --- DASHBOARD DE MÉTRICAS (RESPETANDO MONEDA LOCAL) ---
+st.subheader("📊 Resumen General del Dashboard")
+
+if df_ventas.empty:
+    st.info("No hay facturas registradas para los filtros seleccionados.")
 else:
-    total_neto = total_iva = total_facturado = total_cobrado = total_pendiente = pct_recuperacion = 0.0
+    monedas_presentes = df_ventas['moneda'].unique()
+    paises_presentes = df_ventas['pais'].unique()
 
-col_simbolo = "$" if moneda_seleccionada in ["USD ($)", "Todas"] else ("Q" if moneda_seleccionada == "GTQ (Q)" else "L")
+    # CASO 1: Una sola moneda / país seleccionado -> KPIs directos con la divisa local
+    if len(monedas_presentes) == 1 and (pais_seleccionado != "Todos" or len(paises_presentes) == 1):
+        moneda_actual = monedas_presentes[0]
+        simbolo = get_simbolo(moneda_actual)
+        pais_actual = paises_presentes[0] if len(paises_presentes) == 1 else pais_seleccionado
+        bandera = BANDERAS_PAIS.get(pais_actual, "🌎")
+        
+        total_neto = df_ventas['monto_neto'].sum()
+        total_iva = df_ventas['monto_iva'].sum()
+        total_facturado = df_ventas['monto_total'].sum()
+        total_pendiente = df_ventas['saldo_pendiente'].sum()
+        total_cobrado = total_facturado - total_pendiente
+        pct_recuperacion = (total_cobrado / total_facturado * 100) if total_facturado > 0 else 0.0
 
-col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("Monto Neto", f"{col_simbolo} {total_neto:,.2f}")
-col2.metric("Total IVA / ISV", f"{col_simbolo} {total_iva:,.2f}")
-col3.metric("Total Facturado", f"{col_simbolo} {total_facturado:,.2f}")
-col4.metric("Saldo Pendiente", f"{col_simbolo} {total_pendiente:,.2f}", delta_color="inverse")
-col5.metric("% Recuperación", f"{pct_recuperacion:.1f}%")
+        st.markdown(f"##### {bandera} **{pais_actual}** — Moneda Local: **{moneda_actual}**")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Monto Neto", f"{simbolo} {total_neto:,.2f}")
+        col2.metric("Total IVA / ISV", f"{simbolo} {total_iva:,.2f}")
+        col3.metric("Total Facturado", f"{simbolo} {total_facturado:,.2f}")
+        col4.metric("Saldo Pendiente", f"{simbolo} {total_pendiente:,.2f}", delta_color="inverse")
+        col5.metric("% Recuperación", f"{pct_recuperacion:.1f}%")
+
+    # CASO 2: Múltiples monedas / Vista "Todos" -> Desglose obligatorio por País y Moneda
+    else:
+        st.info("📌 *Cifras agrupadas por país y moneda local para garantizar precisión financiera sin mezclar divisas.*")
+        
+        df_resumen = df_ventas.groupby(["pais", "moneda"]).agg(
+            facturas=("id", "count"),
+            monto_neto=("monto_neto", "sum"),
+            monto_iva=("monto_iva", "sum"),
+            monto_total=("monto_total", "sum"),
+            saldo_pendiente=("saldo_pendiente", "sum")
+        ).reset_index()
+
+        df_resumen["cobrado"] = df_resumen["monto_total"] - df_resumen["saldo_pendiente"]
+        df_resumen["pct_recuperacion"] = df_resumen.apply(
+            lambda r: (r["cobrado"] / r["monto_total"] * 100) if r["monto_total"] > 0 else 0.0, axis=1
+        )
+
+        # Mostrar bloque individual por cada país / moneda presente
+        for _, row in df_resumen.iterrows():
+            p_nom = row["pais"]
+            m_nom = row["moneda"]
+            bandera = BANDERAS_PAIS.get(p_nom, "🌎")
+            simb = get_simbolo(m_nom)
+
+            st.markdown(f"##### {bandera} **{p_nom}** — Divisa: **{m_nom}** ({row['facturas']} factura{'s' if row['facturas'] > 1 else ''})")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Monto Neto", f"{simb} {row['monto_neto']:,.2f}")
+            c2.metric("IVA / ISV", f"{simb} {row['monto_iva']:,.2f}")
+            c3.metric("Total Facturado", f"{simb} {row['monto_total']:,.2f}")
+            c4.metric("Saldo Pendiente", f"{simb} {row['saldo_pendiente']:,.2f}", delta_color="inverse")
+            c5.metric("% Recuperación", f"{row['pct_recuperacion']:.1f}%")
+            st.write("")
+
+        # Tabla Resumen Consolidado
+        with st.expander("📋 Ver Cuadro Resumen Consolidado por País y Moneda Local", expanded=False):
+            st.dataframe(
+                df_resumen,
+                use_container_width=True,
+                column_config={
+                    "pais": "País",
+                    "moneda": "Moneda Local",
+                    "facturas": "N° Facturas",
+                    "monto_neto": st.column_config.NumberColumn("Neto Acumulado", format="%.2f"),
+                    "monto_iva": st.column_config.NumberColumn("IVA/ISV Acumulado", format="%.2f"),
+                    "monto_total": st.column_config.NumberColumn("Total Facturado", format="%.2f"),
+                    "saldo_pendiente": st.column_config.NumberColumn("Saldo Pendiente", format="%.2f"),
+                    "cobrado": st.column_config.NumberColumn("Total Cobrado", format="%.2f"),
+                    "pct_recuperacion": st.column_config.NumberColumn("% Recuperación", format="%.1f%%")
+                },
+                hide_index=True
+            )
 
 st.divider()
 
+# Mostrar notificaciones si existen
 if st.session_state.mensaje_exito:
     st.success(st.session_state.mensaje_exito)
     st.session_state.mensaje_exito = None
@@ -127,9 +209,9 @@ with tab1:
             "cliente": "Cliente / Empresa",
             "fecha": "Fecha",
             "pais": "País",
-            "moneda": "Moneda",
+            "moneda": "Moneda Local",
             "monto_neto": st.column_config.NumberColumn("Valor Neto", format="%.2f"),
-            "monto_iva": st.column_config.NumberColumn("Monto IVA", format="%.2f"),
+            "monto_iva": st.column_config.NumberColumn("Monto IVA/ISV", format="%.2f"),
             "monto_total": st.column_config.NumberColumn("Total Facturado", format="%.2f"),
             "saldo_pendiente": st.column_config.NumberColumn("Saldo Pendiente", format="%.2f"),
             "estado": "Estado"
@@ -137,7 +219,7 @@ with tab1:
         hide_index=True
     )
     
-    # SECCIÓN DE EDICIÓN Y ELIMINACIÓN DE FACTURAS
+    # MODIFICAR O ELIMINAR FACTURA
     st.divider()
     with st.expander("⚙️ Modificar o Eliminar una Factura Registrada"):
         if df_ventas.empty:
@@ -195,7 +277,7 @@ with tab1:
                             
             with col_ed2:
                 st.markdown("#### 🗑️ Eliminar Factura")
-                st.warning("⚠️ **Atención:** Al eliminar esta factura, también se eliminarán todos los abonos registrados vinculados a ella de forma permanente.")
+                st.warning("⚠️ **Atención:** Al eliminar esta factura, también se eliminarán todos sus abonos de forma permanente.")
                 
                 confirmar_eliminar = st.checkbox(f"Confirmo que deseo eliminar la factura N° {factura_sel['num_factura']}")
                 if st.button("🔴 Eliminar Definitivamente", type="primary", disabled=not confirmar_eliminar):
@@ -219,7 +301,7 @@ with tab2:
         with col_p2:
             cliente = st.text_input("Nombre del Cliente / Empresa *")
             fecha_venta = st.date_input("Fecha de Emisión", value=date.today())
-            monto_total = st.number_input("Monto Total Incorporado con IVA *", min_value=0.01, step=10.0, format="%.2f")
+            monto_total = st.number_input("Monto Total Incorporado con IVA/ISV *", min_value=0.01, step=10.0, format="%.2f")
 
         tasa_iva_actual = db.TASAS_IVA[pais_form]
         st.info(f"💡 Para **{pais_form}**, la tasa de impuesto aplicada es del **{int(tasa_iva_actual*100)}%**.")
@@ -294,7 +376,6 @@ with tab3:
         if lista_facturas:
             df_base = pd.DataFrame(lista_facturas)
             
-            # Recalcular desgloses
             netos = []
             ivas = []
             for _, row in df_base.iterrows():
@@ -366,7 +447,7 @@ with tab4:
         st.info("No hay facturas pendientes de cobro para el país y moneda seleccionados.")
     else:
         opciones_factura = {
-            row['id']: f"[{row['pais']} - {row['moneda']}] {row['num_factura']} - {row['cliente']} (Saldo: {row['saldo_pendiente']:,.2f})"
+            row['id']: f"[{row['pais']} - {row['moneda']}] {row['num_factura']} - {row['cliente']} (Saldo: {row['moneda']} {row['saldo_pendiente']:,.2f})"
             for _, row in ventas_pendientes.iterrows()
         }
         
